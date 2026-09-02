@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Word Grid - Scoring D (pts x len squared)</title>
-  <link rel="stylesheet" href="Style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -16,6 +16,7 @@
     <div class="legend-line">
       <span class="legend-pink">Pink tiles</span> (Q, W, Z, X, V, K, J) are worth 5 points each and are rarer than other letters: Every other letter is worth 1. Also, 3-letter words are valid if they contain a pink tile.
     </div>
+    <div class="legend-line">★ <strong>Joker tiles</strong> act as any letter — the game automatically picks whichever letter scores highest. Jokers are worth 1 point and appear slightly more often than other tiles.</div>
     <div class="legend-line">Word score = (sum of letter values) × word length². Longer words score exponentially more!</div>
     <div class="legend-line">Spelling 2+ separate words (different rows/columns) in the same turn adds a +40 bonus, added before multipliers.</div>
     <div class="legend-line">Each time you clear letters by spelling a word, a random empty cell gains a multiplier (×2, ×3, or ×4). Higher values appear near the edges. Multipliers last 8 turns and show a countdown. Multipliers are applied after all other point bonuses.</div>
@@ -159,8 +160,12 @@
   }
 
   // ---- Letter values ----
+  const JOKER_LETTER = '★';
   const SPECIAL_LETTERS = new Set(['Q', 'W', 'Z', 'X', 'V', 'K', 'J']);
-  function letterValue(letter) { return SPECIAL_LETTERS.has(letter) ? 5 : 1; }
+  function letterValue(letter) {
+    if (letter === JOKER_LETTER) return 1;
+    return SPECIAL_LETTERS.has(letter) ? 5 : 1;
+  }
   function isSpecial(letter) { return SPECIAL_LETTERS.has(letter); }
 
   const LETTER_FREQUENCIES = {
@@ -168,9 +173,14 @@
     K: 1, L: 5, M: 3, N: 7, O: 6, P: 3, Q: 1, R: 7, S: 6, T: 7,
     U: 3, V: 1, W: 1, X: 1, Y: 2, Z: 1
   };
+  // Average common letter frequency across the 26-letter pool is ~4.
+  // Joker appears at 2× that = weight 8, making it slightly more common than any single letter.
+  const JOKER_FREQUENCY = 8;
+
   function buildLetterPool() {
     let pool = '';
     for (const [letter, count] of Object.entries(LETTER_FREQUENCIES)) pool += letter.repeat(count);
+    pool += JOKER_LETTER.repeat(JOKER_FREQUENCY);
     return pool;
   }
   const LETTER_POOL = buildLetterPool();
@@ -178,8 +188,10 @@
 
   const VOWEL_SET = new Set(['A', 'E', 'I', 'O', 'U']);
   function isMixedPiece(cells) {
-    const hasVowel     = cells.some(c => VOWEL_SET.has(c.letter));
-    const hasConsonant = cells.some(c => !VOWEL_SET.has(c.letter));
+    // Jokers are wildcards — exclude them from the vowel/consonant check
+    const nonJoker = cells.filter(c => c.letter !== JOKER_LETTER);
+    const hasVowel     = nonJoker.some(c => VOWEL_SET.has(c.letter));
+    const hasConsonant = nonJoker.some(c => !VOWEL_SET.has(c.letter));
     return hasVowel && hasConsonant;
   }
 
@@ -317,6 +329,7 @@
         if (!match) cls += ' empty';
         else if (piece.isBomb) cls += ' bomb';
         else if (isSpecial(match.letter)) cls += ' special';
+        // joker uses default green — no extra class needed
         cellDiv.className = cls;
         cellDiv.textContent = match ? (piece.isBomb ? '💣' : match.letter) : '';
         container.appendChild(cellDiv);
@@ -434,27 +447,82 @@
   }
 
   // ---- Word detection ----
+  const ALL_LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+  // Resolves joker positions in a line to the letter substitution that yields the
+  // highest-scoring valid word. Uses a simplified strategy: optimise per-joker
+  // independently for the best single word containing that joker.
+  //
+  // FUTURE UPGRADE: For turns where multiple words form simultaneously, the optimal
+  // assignment should be evaluated jointly across all jokers and all words (trying
+  // all 26^n combinations for n jokers). This requires running findMatches on each
+  // combination and selecting the one with the highest total turn score. Expensive
+  // but correct. Defer until performance testing warrants it.
+  function resolveJokersInLine(cells) {
+    const jokerIndices = cells.map((c, i) => c.letter === JOKER_LETTER ? i : -1).filter(i => i >= 0);
+    if (jokerIndices.length === 0) return cells;
+
+    // Try each letter for each joker independently and pick the assignment that
+    // produces the highest-scoring valid word containing that joker position.
+    const resolved = cells.map(c => ({ ...c }));
+
+    jokerIndices.forEach(ji => {
+      let bestLetter = 'E'; // fallback
+      let bestScore = -1;
+
+      for (const letter of ALL_LETTERS) {
+        resolved[ji] = { ...cells[ji], letter };
+
+        // Scan the full line with this substitution for any valid word containing ji
+        for (let start = 0; start < cells.length; start++) {
+          if (!resolved[start].letter) continue;
+          let word = '';
+          for (let end = start; end < cells.length; end++) {
+            if (!resolved[end].letter) break;
+            word += resolved[end].letter;
+            const containsJoker = ji >= start && ji <= end;
+            if (!containsJoker) continue;
+            const meetsLengthRule = word.length >= 4 || (word.length === 3 && [...word].some(isSpecial));
+            if (meetsLengthRule && dictionary.has(word)) {
+              const score = wordValue(word);
+              if (score > bestScore) { bestScore = score; bestLetter = letter; }
+            }
+          }
+        }
+      }
+
+      resolved[ji] = { ...cells[ji], letter: bestLetter };
+    });
+
+    return resolved;
+  }
+
   function findMatches(sourceGrid = grid) {
     const boardToScan = sourceGrid;
     const matches = [];
 
     function checkLine(cells) {
-      const n = cells.length;
+      // Resolve any jokers in this line before scanning for words
+      const resolvedCells = resolveJokersInLine(cells);
+      const n = resolvedCells.length;
       let i = 0;
       while (i < n) {
-        if (!cells[i].letter) { i++; continue; }
+        if (!resolvedCells[i].letter) { i++; continue; }
         let j = i;
-        while (j < n && cells[j].letter) j++;
+        while (j < n && resolvedCells[j].letter) j++;
 
         let best = null;
         for (let start = i; start < j; start++) {
           let word = '';
           for (let end = start; end < j; end++) {
-            word += cells[end].letter;
+            word += resolvedCells[end].letter;
             const meetsLengthRule = word.length >= 4 || (word.length === 3 && [...word].some(isSpecial));
             if (meetsLengthRule && dictionary.has(word)) {
               if (!best || word.length > best.word.length) {
-                best = { word, cells: cells.slice(start, end + 1).map(c => ({ row: c.row, col: c.col })) };
+                best = {
+                  word,
+                  cells: cells.slice(start, end + 1).map(c => ({ row: c.row, col: c.col }))
+                };
               }
             }
           }
@@ -836,6 +904,7 @@
         if (letter) {
           className += ' filled';
           if (isSpecial(letter)) className += ' special';
+          // joker uses standard filled style — no extra class needed
         }
         cellEl.className = className;
         cellEl.textContent = letter || '';
@@ -904,6 +973,7 @@
         if (!match) cls += ' empty';
         else if (piece.isBomb) cls += ' bomb';
         else if (isSpecial(match.letter)) cls += ' special';
+        // joker uses default green — no extra class needed
         div.className = cls;
         div.textContent = match ? (piece.isBomb ? '💣' : match.letter) : '';
         dragGhost.appendChild(div);
