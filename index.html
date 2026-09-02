@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Word Grid - Scoring D (pts x len squared)</title>
-  <link rel="stylesheet" href="Style.css">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
@@ -882,11 +882,15 @@
     }
   }
 
+  let ghostHeightPx = 48; // updated by buildGhost; used to anchor bottom of ghost above finger
+
   function buildGhost(piece) {
     const maxDr = Math.max(...piece.cells.map(c => c.dr));
     const maxDc = Math.max(...piece.cells.map(c => c.dc));
     const rows = maxDr + 1;
     const cols = maxDc + 1;
+
+    ghostHeightPx = rows * 48;
 
     dragGhost.style.gridTemplateColumns = `repeat(${cols}, 48px)`;
     dragGhost.style.gridTemplateRows = `repeat(${rows}, 48px)`;
@@ -907,14 +911,16 @@
     }
   }
 
+  const FINGER_GAP = 80; // px between fingertip and bottom edge of ghost
+
   function updateGhostPosition(clientX, clientY) {
     dragGhost.style.left = `${clientX - 24}px`;
-    dragGhost.style.top = `${clientY - 24}px`;
+    dragGhost.style.top = `${clientY - ghostHeightPx - FINGER_GAP}px`;
   }
 
   function pointerToAnchorCell(clientX, clientY) {
     const rect = boardEl.getBoundingClientRect();
-    const row = Math.floor((clientY - rect.top) / CELL_STEP);
+    const row = Math.floor(((clientY - ghostHeightPx - FINGER_GAP) - rect.top) / CELL_STEP);
     const col = Math.floor((clientX - rect.left) / CELL_STEP);
     return { row, col };
   }
