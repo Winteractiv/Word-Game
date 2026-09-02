@@ -482,7 +482,10 @@
             word += resolved[end].letter;
             const containsJoker = ji >= start && ji <= end;
             if (!containsJoker) continue;
-            const meetsLengthRule = word.length >= 4 || (word.length === 3 && [...word].some(isSpecial));
+            // For 3-letter words: a joker resolving to a pink letter does NOT satisfy
+            // the pink tile requirement — only a real pink tile in the span counts.
+            const spanHasRealPink = cells.slice(start, end + 1).some(c => isSpecial(c.letter));
+            const meetsLengthRule = word.length >= 4 || (word.length === 3 && spanHasRealPink);
             if (meetsLengthRule && dictionary.has(word)) {
               const score = wordValue(word);
               if (score > bestScore) { bestScore = score; bestLetter = letter; }
@@ -516,7 +519,10 @@
           let word = '';
           for (let end = start; end < j; end++) {
             word += resolvedCells[end].letter;
-            const meetsLengthRule = word.length >= 4 || (word.length === 3 && [...word].some(isSpecial));
+            // For 3-letter words: only count as valid if a real pink tile exists in the
+            // span — a joker that resolved to a pink letter does not satisfy this rule.
+            const spanHasRealPink = cells.slice(start, end + 1).some(c => isSpecial(c.letter));
+            const meetsLengthRule = word.length >= 4 || (word.length === 3 && spanHasRealPink);
             if (meetsLengthRule && dictionary.has(word)) {
               if (!best || word.length > best.word.length) {
                 best = {
@@ -981,16 +987,19 @@
     }
   }
 
-  const FINGER_GAP = 80; // px between fingertip and bottom edge of ghost
+  const FINGER_GAP = 80; // px between fingertip and bottom edge of ghost (touch/pen only)
+  let isDragTouch = false; // true when current drag was initiated by touch or pen
 
   function updateGhostPosition(clientX, clientY) {
+    const gap = isDragTouch ? ghostHeightPx + FINGER_GAP : 24;
     dragGhost.style.left = `${clientX - 24}px`;
-    dragGhost.style.top = `${clientY - ghostHeightPx - FINGER_GAP}px`;
+    dragGhost.style.top = `${clientY - gap}px`;
   }
 
   function pointerToAnchorCell(clientX, clientY) {
     const rect = boardEl.getBoundingClientRect();
-    const row = Math.floor(((clientY - ghostHeightPx - FINGER_GAP) - rect.top) / CELL_STEP);
+    const gap = isDragTouch ? ghostHeightPx + FINGER_GAP : 24;
+    const row = Math.floor(((clientY - gap) - rect.top) / CELL_STEP);
     const col = Math.floor((clientX - rect.left) / CELL_STEP);
     return { row, col };
   }
@@ -1072,6 +1081,7 @@
     dragging = true;
     draggingKey = key;
     lastAnchor = null;
+    isDragTouch = e.pointerType === 'touch' || e.pointerType === 'pen';
     buildGhost(pieces[key]);
     dragGhost.style.display = 'grid';
     updateGhostPosition(e.clientX, e.clientY);
