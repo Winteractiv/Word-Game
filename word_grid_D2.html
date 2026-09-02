@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Word Grid - Scoring D (pts x len squared)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="game-layout">
+  
+  <!-- Left Side on Desktop / Middle on Mobile: Rules -->
+  <aside class="pane rules-pane" id="scorePanel">
+    <h2>Scoring Rules</h2>
+    <div class="legend-line">
+      <span class="legend-pink">Pink tiles</span> (Q, W, Z, X, V, K, J) are worth 5 points each and are rarer than other letters: Every other letter is worth 1. Also, 3-letter words are valid if they contain a pink tile.
+    </div>
+    <div class="legend-line">Word score = (sum of letter values) × word length². Longer words score exponentially more!</div>
+    <div class="legend-line">Spelling 2+ separate words (different rows/columns) in the same turn adds a +40 bonus, added before multipliers.</div>
+    <div class="legend-line">Each time you clear letters by spelling a word, a random empty cell gains a multiplier (×2, ×3, or ×4). Higher values appear near the edges. Multipliers last 8 turns and show a countdown. Multipliers are applied after all other point bonuses.</div>
+    <div class="legend-line">
+      <span class="legend-bomb">💣 Bombs</span> allow you to remove tricky letters from your board. Bombs score 10 points per letter removed (multipliers apply).
+    </div>
+    <div id="scoreBreakdown">Last turn: —</div>
+  </aside>
+
+  <!-- Center on Desktop / Top on Mobile: Game Area -->
+  <main class="pane game-pane">
+    <h1>Simon's Word Grid Game</h1>
+    <p class="subtitle">Rotate and drag one of the pieces into the puzzle to spell words! Words must be at least 4 letters to count, but a 3-letter word is valid if it contains a <span class="legend-pink">pink rare letter</span>.</p>
+
+    <div id="topBar">
+      <div id="score">Score: 0</div>
+      <div id="turnCounter">Turn: 0</div>
+      <button id="hintBtn">💡 Hint</button>
+    </div>
+    <div id="hintResult"></div>
+
+    <div id="pieceTray"></div>
+
+    <div id="board"></div>
+    <div id="status"></div>
+  </main>
+
+  <!-- Right Side on Desktop / Bottom on Mobile: Tracker -->
+  <aside class="pane scores-pane" id="trackerColumn">
+    <h2>High Scores</h2>
+    
+    <div class="high-scores-grid">
+      <div class="tracker-section">
+        <h3>Longest (Game)</h3>
+        <ol id="longestGameList" class="tracker-list"></ol>
+      </div>
+      
+      <div class="tracker-section">
+        <h3>Longest (All Time)</h3>
+        <ol id="longestAllTimeList" class="tracker-list"></ol>
+      </div>
+  
+      <div class="tracker-section">
+        <h3>Highest Score (Game)</h3>
+        <ol id="highestGameList" class="tracker-list"></ol>
+      </div>
+      
+      <div class="tracker-section">
+        <h3>Highest Score (All Time)</h3>
+        <ol id="highestAllTimeList" class="tracker-list"></ol>
+      </div>
+    </div>
+
+    <div class="tracker-section recent-words-section">
+      <h3>Recent Words (Last 20)</h3>
+      <ul id="recentWordsList" class="tracker-list"></ul>
+    </div>
+  </aside>
+
+</div>
+
+<div id="dragGhost" style="display:none;"></div>
+
+<script>
+  const SIZE = 8;
+  const CELL_STEP = 52; 
+  const BOMB_CHANCE = 0.08; 
+  const CLEAR_ANIMATION_MS = 550;
+
+  const boardEl = document.getElementById('board');
+  const statusEl = document.getElementById('status');
+  const scoreEl = document.getElementById('score');
+  const turnCounterEl = document.getElementById('turnCounter');
+  const scoreBreakdownEl = document.getElementById('scoreBreakdown');
+  const pieceTrayEl = document.getElementById('pieceTray');
+  const dragGhost = document.getElementById('dragGhost');
+  const hintBtn = document.getElementById('hintBtn');
+  const hintResultEl = document.getElementById('hintResult');
+
+  const grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+  const multiplierGrid = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+
+  let cellEls = [];
+  let score = 0;
+  let turnCount = 0;
+  let gameOver = false;
+
+  // --- Tracker State ---
+  let recentWords = [];
+  let longestGame = [];
+  let highestGame = [];
+  let longestAllTime = JSON.parse(localStorage.getItem('wordGrid_longestAllTime')) || [];
+  let highestAllTime = JSON.parse(localStorage.getItem('wordGrid_highestAllTime')) || [];
+
+  function updateTrackerLists() {
+    const renderList = (elementId, data, isRecent = false) => {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      el.innerHTML = '';
+      data.forEach(item => {
+        const li = document.createElement('li');
+        li.textContent = `${item.word} (${Math.round(item.score)} pts)`;
+        if(isRecent) li.style.color = '#9ecb9e';
+        el.appendChild(li);
+      });
+    };
+
+    renderList('recentWordsList', recentWords, true);
+    renderList('longestGameList', longestGame);
+    renderList('highestGameList', highestGame);
+    renderList('longestAllTimeList', longestAllTime);
+    renderList('highestAllTimeList', highestAllTime);
+  }
+
+  function logWord(word, score) {
+    const entry = { word, score };
+
+    recentWords.unshift(entry);
+    if (recentWords.length > 20) recentWords.pop();
+
+    const insertAndTrim = (arr, newEntry, compareFn) => {
+      if (!arr.find(e => e.word === newEntry.word)) {
+        arr.push(newEntry);
+        arr.sort(compareFn);
+        if (arr.length > 3) arr.pop();
+      }
+    };
+
+    const sortByLength = (a, b) => b.word.length - a.word.length || b.score - a.score;
+    const sortByScore = (a, b) => b.score - a.score || b.word.length - a.word.length;
+
+    insertAndTrim(longestGame, entry, sortByLength);
+    insertAndTrim(highestGame, entry, sortByScore);
+    insertAndTrim(longestAllTime, entry, sortByLength);
+    insertAndTrim(highestAllTime, entry, sortByScore);
+
+    localStorage.setItem('wordGrid_longestAllTime', JSON.stringify(longestAllTime));
+    localStorage.setItem('wordGrid_highestAllTime', JSON.stringify(highestAllTime));
+    
+    updateTrackerLists();
+  }
+
+  // ---- Letter values ----
+  const SPECIAL_LETTERS = new Set(['Q', 'W', 'Z', 'X', 'V', 'K', 'J']);
+  function letterValue(letter) { return SPECIAL_LETTERS.has(letter) ? 5 : 1; }
+  function isSpecial(letter) { return SPECIAL_LETTERS.has(letter); }
+
+  const LETTER_FREQUENCIES = {
+    A: 7, B: 3, C: 4, D: 5, E: 9, F: 3, G: 3, H: 3, I: 7, J: 1,
+    K: 1, L: 5, M: 3, N: 7, O: 6, P: 3, Q: 1, R: 7, S: 6, T: 7,
+    U: 3, V: 1, W: 1, X: 1, Y: 2, Z: 1
+  };
+  function buildLetterPool() {
+    let pool = '';
+    for (const [letter, count] of Object.entries(LETTER_FREQUENCIES)) pool += letter.repeat(count);
+    return pool;
+  }
+  const LETTER_POOL = buildLetterPool();
+  function randomLetter() { return LETTER_POOL[Math.floor(Math.random() * LETTER_POOL.length)]; }
+
+  const VOWEL_SET = new Set(['A', 'E', 'I', 'O', 'U']);
+  function isMixedPiece(cells) {
+    const hasVowel     = cells.some(c => VOWEL_SET.has(c.letter));
+    const hasConsonant = cells.some(c => !VOWEL_SET.has(c.letter));
+    return hasVowel && hasConsonant;
+  }
+
+  // ---- Dictionary ----
+  let dictionary = new Set();
+
+  async function loadDictionary() {
+    try {
+      const response = await fetch('dictionary.json');
+      const data = await response.json();
+
+      let rawWords;
+      if (Array.isArray(data)) {
+        rawWords = data;
+      } else if (typeof data === 'object' && data !== null) {
+        if (Array.isArray(data.words)) rawWords = data.words;
+        else if (data.words && typeof data.words === 'object') rawWords = Object.values(data.words).flat();
+        else rawWords = Object.keys(data);
+      } else {
+        throw new Error('Unrecognized dictionary.json format');
+      }
+
+      const words = rawWords.map(w => String(w).trim().toUpperCase()).filter(w => w.length >= 3);
+      dictionary = new Set(words);
+      statusEl.textContent = `Loaded ${dictionary.size} words. Drag a piece onto the board!`;
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Could not load dictionary.json — check the console (F12) for details.';
+    }
+  }
+
+  // ---- Piece shapes ----
+  const SHAPE_TEMPLATES = {
+    1: [ [[0, 0]] ],
+    2: [ [[0, 0], [0, 1]] ],
+    3: [
+      [[0, 0], [0, 1], [0, 2]],
+      [[0, 0], [0, 1], [1, 1]]
+    ]
+  };
+
+  // Size-4 shapes use explicit weights rather than repetition.
+  // straight: 4, L-bend: 4, box: 2 — preserves original distribution.
+  const SHAPE_4_OPTIONS = [
+    { shape: [[0, 0], [0, 1], [0, 2], [0, 3]], weight: 4 },  // straight
+    { shape: [[0, 0], [1, 0], [2, 0], [2, 1]], weight: 4 },  // L-bend
+    { shape: [[0, 0], [0, 1], [1, 0], [1, 1]], weight: 2 },  // box
+  ];
+  const SHAPE_4_TOTAL = SHAPE_4_OPTIONS.reduce((s, o) => s + o.weight, 0);
+
+  // Entries are [size, weight] pairs with numeric keys; total is precomputed once.
+  const SIZE_WEIGHT_ENTRIES = [[1, 1], [2, 3], [3, 4], [4, 4]];
+  const SIZE_WEIGHT_TOTAL = SIZE_WEIGHT_ENTRIES.reduce((sum, [, w]) => sum + w, 0);
+
+  function weightedRandomSize() {
+    let r = Math.random() * SIZE_WEIGHT_TOTAL;
+    for (const [size, w] of SIZE_WEIGHT_ENTRIES) {
+      if (r < w) return size;
+      r -= w;
+    }
+    return SIZE_WEIGHT_ENTRIES.at(-1)[0];
+  }
+
+  function randomShapeCells() {
+    const size = weightedRandomSize();
+    if (size === 4) {
+      let r = Math.random() * SHAPE_4_TOTAL;
+      for (const { shape, weight } of SHAPE_4_OPTIONS) {
+        if (r < weight) return shape;
+        r -= weight;
+      }
+      return SHAPE_4_OPTIONS.at(-1).shape;
+    }
+    const options = SHAPE_TEMPLATES[size];
+    return options[Math.floor(Math.random() * options.length)];
+  }
+
+  function generateLetterPiece() {
+    const template = randomShapeCells();
+    const size = template.length;
+    const enforceMix = turnCount < 40 && ((size >= 3) || (size === 2 && turnCount < 20));
+
+    let cells;
+    let attempts = 0;
+    do {
+      cells = template.map(([dr, dc]) => ({ dr, dc, letter: randomLetter() }));
+      attempts++;
+    } while (enforceMix && !isMixedPiece(cells) && attempts < 20);
+
+    return { cells, isBomb: false };
+  }
+
+  function generateBombPiece() {
+    const template = randomShapeCells();
+    const cells = template.map(([dr, dc]) => ({ dr, dc, letter: null }));
+    return { cells, isBomb: true };
+  }
+
+  function generatePieceForSlot(otherSlotPiece) {
+    const otherHasBomb = otherSlotPiece && otherSlotPiece.isBomb;
+    if (!otherHasBomb && Math.random() < BOMB_CHANCE) return generateBombPiece();
+    return generateLetterPiece();
+  }
+
+  function rotatePiece(piece) {
+    const rotated = piece.cells.map(c => ({ dr: c.dc, dc: -c.dr, letter: c.letter }));
+    const minDr = Math.min(...rotated.map(c => c.dr));
+    const minDc = Math.min(...rotated.map(c => c.dc));
+    return {
+      cells: rotated.map(c => ({ dr: c.dr - minDr, dc: c.dc - minDc, letter: c.letter })),
+      isBomb: piece.isBomb
+    };
+  }
+
+  const pieces = {};
+  pieces.A = generatePieceForSlot(null);
+  pieces.B = generatePieceForSlot(pieces.A);
+
+  // ---- Piece tray rendering ----
+  function renderPieceShape(container, piece) {
+    const maxDr = Math.max(...piece.cells.map(c => c.dr));
+    const maxDc = Math.max(...piece.cells.map(c => c.dc));
+    const rows = maxDr + 1;
+    const cols = maxDc + 1;
+
+    container.style.gridTemplateColumns = `repeat(${cols}, 32px)`;
+    container.style.gridTemplateRows = `repeat(${rows}, 32px)`;
+    container.innerHTML = '';
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const match = piece.cells.find(cell => cell.dr === r && cell.dc === c);
+        const cellDiv = document.createElement('div');
+        let cls = 'piece-cell';
+        if (!match) cls += ' empty';
+        else if (piece.isBomb) cls += ' bomb';
+        else if (isSpecial(match.letter)) cls += ' special';
+        cellDiv.className = cls;
+        cellDiv.textContent = match ? (piece.isBomb ? '💣' : match.letter) : '';
+        container.appendChild(cellDiv);
+      }
+    }
+  }
+
+  function renderPieceTray() {
+    hintResultEl.textContent = '';
+    pieceTrayEl.innerHTML = '';
+
+    ['A', 'B'].forEach(key => {
+      const piece = pieces[key];
+      const slot = document.createElement('div');
+      slot.className = 'piece-slot' + (piece.isBomb ? ' bomb-slot' : '');
+
+      const label = document.createElement('div');
+      label.className = 'piece-label';
+      label.textContent = piece.isBomb ? '💣 Bomb — drop on letters' : (key === 'A' ? 'Option 1' : 'Option 2');
+
+      const shapeWrap = document.createElement('div');
+      shapeWrap.className = 'piece-shape-wrap';
+
+      const wrap = document.createElement('div');
+      wrap.className = 'draggable-wrap';
+      const shapeGrid = document.createElement('div');
+      shapeGrid.className = 'piece-shape-grid';
+      renderPieceShape(shapeGrid, piece);
+      wrap.appendChild(shapeGrid);
+      shapeWrap.appendChild(wrap);
+
+      const rotateBtn = document.createElement('button');
+      rotateBtn.textContent = 'Rotate ↻';
+      rotateBtn.addEventListener('click', () => {
+        pieces[key] = rotatePiece(pieces[key]);
+        renderPieceTray();
+      });
+
+      wrap.addEventListener('pointerdown', (e) => startDrag(key, e));
+
+      slot.appendChild(label);
+      slot.appendChild(shapeWrap);
+      slot.appendChild(rotateBtn);
+      pieceTrayEl.appendChild(slot);
+    });
+  }
+
+  // ---- Placement validity ----
+  function computeTargets(piece, anchorRow, anchorCol) {
+    let valid = true;
+    let touchesLetter = false;
+
+    const targets = piece.cells.map(c => {
+      const r = anchorRow + c.dr;
+      const cVal = anchorCol + c.dc;
+      const inBounds = r >= 0 && r < SIZE && cVal >= 0 && cVal < SIZE;
+      const hasLetter = inBounds && grid[r][cVal] !== null;
+
+      if (!inBounds) valid = false;
+      if (piece.isBomb) {
+        if (hasLetter) touchesLetter = true;
+      } else if (hasLetter) {
+        valid = false;
+      }
+
+      return { r, c: cVal, letter: c.letter, inBounds, hasLetter };
+    });
+
+    if (piece.isBomb && !touchesLetter) valid = false;
+    return { targets, valid };
+  }
+
+  function pieceHasValidPlacement(piece) {
+    let current = piece;
+    for (let rotation = 0; rotation < 4; rotation++) {
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          if (computeTargets(current, r, c).valid) return true;
+        }
+      }
+      current = rotatePiece(current);
+    }
+    return false;
+  }
+
+  function checkGameOver() {
+    if (gameOver) return;
+    if (!pieceHasValidPlacement(pieces.A) && !pieceHasValidPlacement(pieces.B)) {
+      gameOver = true;
+      statusEl.textContent = `Game over — neither piece fits anywhere. Final score: ${Math.round(score)}`;
+      statusEl.classList.add('game-over');
+      boardEl.style.pointerEvents = 'none';
+      pieceTrayEl.style.opacity = '0.5';
+      pieceTrayEl.style.pointerEvents = 'none';
+    }
+  }
+
+  function placePiece(pieceKey, anchorRow, anchorCol) {
+    const piece = pieces[pieceKey];
+    const { targets, valid } = computeTargets(piece, anchorRow, anchorCol);
+    if (!valid) return null;
+
+    let result;
+    if (piece.isBomb) {
+      const bombedCells = targets
+        .filter(t => t.hasLetter)
+        .map(t => ({ row: t.r, col: t.c, letter: grid[t.r][t.c] }));
+      result = { wasBomb: true, bombedCells };
+    } else {
+      targets.forEach(({ r, c, letter }) => { grid[r][c] = letter; });
+      result = { wasBomb: false };
+    }
+
+    return result;
+  }
+
+  // ---- Word detection ----
+  function findMatches(sourceGrid = grid) {
+    const boardToScan = sourceGrid;
+    const matches = [];
+
+    function checkLine(cells) {
+      const n = cells.length;
+      let i = 0;
+      while (i < n) {
+        if (!cells[i].letter) { i++; continue; }
+        let j = i;
+        while (j < n && cells[j].letter) j++;
+
+        let best = null;
+        for (let start = i; start < j; start++) {
+          let word = '';
+          for (let end = start; end < j; end++) {
+            word += cells[end].letter;
+            const meetsLengthRule = word.length >= 4 || (word.length === 3 && [...word].some(isSpecial));
+            if (meetsLengthRule && dictionary.has(word)) {
+              if (!best || word.length > best.word.length) {
+                best = { word, cells: cells.slice(start, end + 1).map(c => ({ row: c.row, col: c.col })) };
+              }
+            }
+          }
+        }
+        if (best) matches.push(best);
+        i = j;
+      }
+    }
+
+    for (let row = 0; row < SIZE; row++) {
+      const line = [];
+      for (let col = 0; col < SIZE; col++) line.push({ row, col, letter: boardToScan[row][col] });
+      checkLine(line);
+    }
+    for (let col = 0; col < SIZE; col++) {
+      const line = [];
+      for (let row = 0; row < SIZE; row++) line.push({ row, col, letter: boardToScan[row][col] });
+      checkLine(line);
+    }
+
+    return matches;
+  }
+
+  function wordValue(word) {
+    const letterSum = word.split('').reduce((sum, ch) => sum + letterValue(ch), 0);
+    return letterSum * (word.length ** 2);
+  }
+
+  function canUseHint() {
+    return true; 
+  }
+
+  // Cache the hint result for the current turn so repeated clicks don't re-scan.
+  let hintCache = { turn: -1, result: null };
+
+  function findBestHintWord() {
+    if (hintCache.turn === turnCount) return hintCache.result;
+
+    let best = null;
+    ['A', 'B'].forEach(key => {
+      let candidate = pieces[key];
+      if (candidate.isBomb) return;
+
+      for (let rotation = 0; rotation < 4; rotation++) {
+        for (let row = 0; row < SIZE; row++) {
+          for (let col = 0; col < SIZE; col++) {
+            const { targets, valid } = computeTargets(candidate, row, col);
+            if (!valid) continue;
+
+            const hypotheticalGrid = grid.map(r => r.slice());
+            targets.forEach(t => { hypotheticalGrid[t.r][t.c] = t.letter; });
+
+            const matches = findMatches(hypotheticalGrid);
+            if (matches.length === 0) continue;
+
+            const clearedCells = new Set();
+            let baseSum = 0;
+            matches.forEach(match => {
+              baseSum += wordValue(match.word);
+              match.cells.forEach(({ row, col }) => clearedCells.add(`${row},${col}`));
+            });
+            const multiWordBonus = matches.length > 1 ? 40 : 0;
+            const preMultiplierTotal = baseSum + multiWordBonus;
+
+            let multiplierFactor = 1;
+            clearedCells.forEach(key => {
+              const [r, c] = key.split(',').map(Number);
+              const m = multiplierGrid[r][c];
+              if (m) multiplierFactor *= m.value;
+            });
+
+            const value = preMultiplierTotal * multiplierFactor;
+            const bestWord = matches.reduce((a, b) => wordValue(a.word) > wordValue(b.word) ? a : b).word;
+            if (!best || value > best.value) best = { word: bestWord, value };
+          }
+        }
+        candidate = rotatePiece(candidate);
+      }
+    });
+
+    hintCache = { turn: turnCount, result: best };
+    return best;
+  }
+
+  // ---- Multiplier spawning and expiry ----
+  const MULT_LIFETIME = 8;   
+
+  function distanceFromEdge(row, col) { return Math.min(row, col, SIZE - 1 - row, SIZE - 1 - col); }
+  function multiplierValueForZone(row, col) {
+    const dist = distanceFromEdge(row, col);
+    if (dist === 0) return 4;
+    if (dist === 1) return 3;
+    return 2;
+  }
+
+  function expireMultipliers() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const m = multiplierGrid[r][c];
+        if (m && (MULT_LIFETIME - (turnCount - m.born)) <= 0) {
+          multiplierGrid[r][c] = null;
+        }
+      }
+    }
+  }
+
+  function maybeSpawnMultiplier() {
+    const emptyCandidates = [];
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (grid[r][c] === null && multiplierGrid[r][c] === null) emptyCandidates.push({ r, c });
+      }
+    }
+    if (emptyCandidates.length === 0) return;
+    const spot = emptyCandidates[Math.floor(Math.random() * emptyCandidates.length)];
+    multiplierGrid[spot.r][spot.c] = { value: multiplierValueForZone(spot.r, spot.c), born: turnCount };
+  }
+
+  // ---- Animation helpers ----
+  function scoreTier(gained) {
+    if (gained <= 64) return 1;
+    if (gained <= 128) return 2;
+    if (gained <= 256) return 3;
+    return 4;
+  }
+
+  function spawnScorePopup(text, tier, coords) {
+    const rects = coords.map(([r, c]) => cellEls[r][c].getBoundingClientRect());
+    const avgX = rects.reduce((s, rect) => s + rect.left + rect.width / 2, 0) / rects.length;
+    const avgY = rects.reduce((s, rect) => s + rect.top, 0) / rects.length;
+
+    const popup = document.createElement('div');
+    popup.className = `score-popup tier-${tier}`;
+    popup.textContent = text;
+    popup.style.left = `${avgX}px`;
+    popup.style.top = `${avgY}px`;
+    document.body.appendChild(popup);
+    popup.addEventListener('animationend', () => popup.remove());
+  }
+
+  function bumpScoreDisplay(tier) {
+    scoreEl.classList.remove('bump', 'tier-1', 'tier-2', 'tier-3', 'tier-4');
+    void scoreEl.offsetWidth; 
+    scoreEl.classList.add('bump', `tier-${tier}`);
+  }
+
+  // ---- Resolving a turn's effect ----
+  function resolveWordMatches(matches, onDone) {
+    if (matches.length === 0) {
+      scoreBreakdownEl.textContent = 'Last turn: no words formed.';
+      onDone();
+      return;
+    }
+
+    const clearedCells = new Set();
+    const wordSummaries = [];
+    let baseSum = 0;
+
+    matches.forEach(match => {
+      const word = match.word;
+      const letterPts = word.split('').reduce((sum, ch) => sum + letterValue(ch), 0);
+      const lengthSq = word.length ** 2;
+      const val = letterPts * lengthSq;
+      baseSum += val;
+      wordSummaries.push(`${word} (${letterPts} letter pts x ${lengthSq} length squared = ${val})`);
+      match.cells.forEach(({ row, col }) => clearedCells.add(`${row},${col}`));
+    });
+
+    const multiWordBonus = matches.length > 1 ? 40 : 0;
+    const preMultiplierTotal = baseSum + multiWordBonus;
+
+    let multiplierFactor = 1;
+    const multipliersUsed = [];
+    clearedCells.forEach(key => {
+      const [row, col] = key.split(',').map(Number);
+      const m = multiplierGrid[row][col];
+      if (m) {
+        multiplierFactor *= m.value;
+        multipliersUsed.push(m.value);
+      }
+    });
+
+    // Log the individual words for the tracker side panel
+    matches.forEach(match => {
+      const individualScore = wordValue(match.word) * multiplierFactor;
+      logWord(match.word, individualScore);
+    });
+
+    const gained = preMultiplierTotal * multiplierFactor;
+    const tier = scoreTier(gained);
+    const coords = [...clearedCells].map(key => key.split(',').map(Number));
+
+    coords.forEach(([row, col]) => cellEls[row][col].classList.add('clearing', `tier-${tier}`));
+    spawnScorePopup(`+${Math.round(gained)}`, tier, coords);
+
+    score += gained;
+    scoreEl.textContent = `Score: ${Math.round(score)}`;
+    bumpScoreDisplay(tier);
+
+    const gainedExact = preMultiplierTotal * multiplierFactor;
+    const gainedRounded = Math.round(gainedExact);
+
+    // Build breakdown string
+    // Single word summaries already end with the word's value; only append "pts" when
+    // there are no further terms (no bonus, no multiplier) so it serves as the final unit.
+    const hasBonus = multiWordBonus > 0;
+    const hasMult = multipliersUsed.length > 0;
+    const wordParts = wordSummaries.map((s, i) => {
+      // If this is the only term and nothing follows, close with "pts" inside the parens
+      if (!hasBonus && !hasMult && wordSummaries.length === 1) {
+        return s.replace(/= (\d+)\)$/, '= $1 pts)');
+      }
+      return s;
+    });
+
+    let breakdown = `Last turn: ${wordParts.join(' + ')}`;
+    if (hasBonus) breakdown += ` + ${multiWordBonus} bonus`;
+
+    if (hasMult) {
+      // Show pre-multiplier total only when there's something to sum (bonus or multiple words)
+      if (hasBonus || wordSummaries.length > 1) {
+        const pre = preMultiplierTotal % 1 === 0 ? preMultiplierTotal : preMultiplierTotal.toFixed(1);
+        breakdown += ` = ${pre}`;
+      }
+      breakdown += ` ${multipliersUsed.map(m => `x${m} mult`).join(' ')}`;
+      if (gainedExact !== gainedRounded) {
+        breakdown += ` = ${gainedExact % 1 === 0 ? gainedExact : gainedExact.toFixed(1)}, rounded up to ${gainedRounded} pts`;
+      } else {
+        breakdown += ` = ${gainedRounded} pts`;
+      }
+    } else if (hasBonus || wordSummaries.length > 1) {
+      // No multiplier but multiple terms — show the sum at the end
+      if (gainedExact !== gainedRounded) {
+        breakdown += ` = ${gainedExact % 1 === 0 ? gainedExact : gainedExact.toFixed(1)}, rounded up to ${gainedRounded} pts`;
+      } else {
+        breakdown += ` = ${gainedRounded} pts`;
+      }
+    }
+
+    scoreBreakdownEl.textContent = breakdown;
+    statusEl.textContent = `Cleared ${matches.map(m => m.word).join(', ')} for +${Math.round(gained)} points!`;
+
+    setTimeout(() => {
+      coords.forEach(([row, col]) => { grid[row][col] = null; });
+      onDone();
+    }, CLEAR_ANIMATION_MS);
+  }
+
+  function resolveBomb(bombedCells, onDone) {
+    if (bombedCells.length === 0) { onDone(); return; }
+
+    let gained = 0;
+    const removedLetters = [];
+    bombedCells.forEach(({ row, col, letter }) => {
+      let val = 10;
+      const m = multiplierGrid[row][col];
+      if (m) val *= m.value;
+      gained += val;
+      removedLetters.push(letter);
+    });
+
+    const tier = scoreTier(gained);
+    const coords = bombedCells.map(c => [c.row, c.col]);
+    coords.forEach(([row, col]) => cellEls[row][col].classList.add('clearing', `tier-${tier}`, 'bomb'));
+    spawnScorePopup(`💥 +${Math.round(gained)}`, tier, coords);
+
+    score += gained;
+    scoreEl.textContent = `Score: ${Math.round(score)}`;
+    bumpScoreDisplay(tier);
+
+    scoreBreakdownEl.textContent = `Last turn: Bomb removed ${removedLetters.join(', ')} = ${Math.round(gained)} pts`;
+    statusEl.textContent = `Bomb cleared ${bombedCells.length} letter${bombedCells.length > 1 ? 's' : ''} for +${Math.round(gained)} points!`;
+
+    setTimeout(() => {
+      bombedCells.forEach(({ row, col }) => { grid[row][col] = null; });
+      onDone();
+    }, CLEAR_ANIMATION_MS);
+  }
+
+  // ---- Multiplier donut indicator ----
+  const DONUT_COLORS = { 2: '#4a7fd4', 3: '#d4914a', 4: '#d44a4a' };
+
+  // Build all 24 donut SVGs (3 values × 8 turn counts) once at startup.
+  // render() clones from this table instead of constructing SVGs on every frame.
+  function buildDonutSVG(multValue, turnsLeft) {
+    const size = 22;
+    const cx = size / 2;
+    const cy = size / 2;
+    const R = 10.5;
+    const r = 5.5;
+    const color = DONUT_COLORS[multValue] || '#888';
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+
+    const bgCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    bgCircle.setAttribute('cx', cx);
+    bgCircle.setAttribute('cy', cy);
+    bgCircle.setAttribute('r', (R + r) / 2);
+    bgCircle.setAttribute('fill', 'none');
+    bgCircle.setAttribute('stroke', '#1a1a2a');
+    bgCircle.setAttribute('stroke-width', R - r);
+    svg.appendChild(bgCircle);
+
+    if (turnsLeft > 0) {
+      const circumference = 2 * Math.PI * ((R + r) / 2);
+      const sliceGap = circumference * 0.025;
+      const sliceArc = (circumference / MULT_LIFETIME) - sliceGap;
+
+      let dashArray = '';
+      for (let i = 0; i < turnsLeft; i++) dashArray += `${sliceArc} ${sliceGap} `;
+      dashArray += `0 ${circumference}`;
+
+      const arc = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      arc.setAttribute('cx', cx);
+      arc.setAttribute('cy', cy);
+      arc.setAttribute('r', (R + r) / 2);
+      arc.setAttribute('fill', 'none');
+      arc.setAttribute('stroke', color);
+      arc.setAttribute('stroke-width', R - r);
+      arc.setAttribute('stroke-dasharray', dashArray.trim());
+      arc.setAttribute('transform', `rotate(-90 ${cx} ${cy})`);
+      svg.appendChild(arc);
+    }
+
+    const hole = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    hole.setAttribute('cx', cx);
+    hole.setAttribute('cy', cy);
+    hole.setAttribute('r', r);
+    hole.setAttribute('fill', '#1a1a2a');
+    svg.appendChild(hole);
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', cx);
+    label.setAttribute('y', cy);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('dominant-baseline', 'central');
+    label.setAttribute('font-size', '6');
+    label.setAttribute('font-weight', 'bold');
+    label.setAttribute('font-family', 'sans-serif');
+    label.setAttribute('fill', color);
+    label.textContent = `x${multValue}`;
+    svg.appendChild(label);
+
+    return svg;
+  }
+
+  const DONUT_CACHE = {};
+  for (const value of [2, 3, 4]) {
+    DONUT_CACHE[value] = {};
+    for (let t = 1; t <= MULT_LIFETIME; t++) {
+      DONUT_CACHE[value][t] = buildDonutSVG(value, t);
+    }
+  }
+
+  // ---- Board rendering ----
+  function initBoard() {
+    boardEl.innerHTML = '';
+    cellEls = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+
+    for (let row = 0; row < SIZE; row++) {
+      for (let col = 0; col < SIZE; col++) {
+        const cellEl = document.createElement('div');
+        cellEl.className = 'cell';
+        cellEls[row][col] = cellEl;
+        boardEl.appendChild(cellEl);
+      }
+    }
+  }
+
+  function render() {
+    for (let row = 0; row < SIZE; row++) {
+      for (let col = 0; col < SIZE; col++) {
+        const cellEl = cellEls[row][col];
+        let className = 'cell';
+        const letter = grid[row][col];
+        if (letter) {
+          className += ' filled';
+          if (isSpecial(letter)) className += ' special';
+        }
+        cellEl.className = className;
+        cellEl.textContent = letter || '';
+
+        const existingBadge = cellEl.querySelector('.mult-badge');
+        if (existingBadge) cellEl.removeChild(existingBadge);
+
+        const mult = multiplierGrid[row][col];
+        if (mult) {
+          const turnsLeft = MULT_LIFETIME - (turnCount - mult.born);
+          // Guard: skip if expired (expireMultipliers runs after turnCount increments,
+          // so there's a brief window where turnsLeft can be 0 or negative before cleanup).
+          if (turnsLeft >= 1) {
+            const clampedTurns = Math.min(turnsLeft, MULT_LIFETIME);
+            const badge = document.createElement('span');
+            badge.className = 'mult-badge';
+            badge.appendChild(DONUT_CACHE[mult.value][clampedTurns].cloneNode(true));
+            cellEl.appendChild(badge);
+          }
+        }
+      }
+    }
+
+    turnCounterEl.textContent = `Turn: ${turnCount}`;
+  }
+
+  function placeStartingCluster() {
+    const start = Math.floor(SIZE / 2) - 1;
+    for (let r = start; r < start + 3; r++) {
+      for (let c = start; c < start + 3; c++) {
+        grid[r][c] = randomLetter();
+      }
+    }
+  }
+
+  // ---- Drag and drop ----
+  let dragging = false;
+  let draggingKey = null;
+  let lastAnchor = null;
+
+  function clearPreview() {
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) cellEls[r][c].classList.remove('preview-valid', 'preview-no-word', 'preview-invalid');
+    }
+  }
+
+  function buildGhost(piece) {
+    const maxDr = Math.max(...piece.cells.map(c => c.dr));
+    const maxDc = Math.max(...piece.cells.map(c => c.dc));
+    const rows = maxDr + 1;
+    const cols = maxDc + 1;
+
+    dragGhost.style.gridTemplateColumns = `repeat(${cols}, 48px)`;
+    dragGhost.style.gridTemplateRows = `repeat(${rows}, 48px)`;
+    dragGhost.innerHTML = '';
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const match = piece.cells.find(cell => cell.dr === r && cell.dc === c);
+        const div = document.createElement('div');
+        let cls = 'ghost-cell';
+        if (!match) cls += ' empty';
+        else if (piece.isBomb) cls += ' bomb';
+        else if (isSpecial(match.letter)) cls += ' special';
+        div.className = cls;
+        div.textContent = match ? (piece.isBomb ? '💣' : match.letter) : '';
+        dragGhost.appendChild(div);
+      }
+    }
+  }
+
+  function updateGhostPosition(clientX, clientY) {
+    dragGhost.style.left = `${clientX - 24}px`;
+    dragGhost.style.top = `${clientY - 24}px`;
+  }
+
+  function pointerToAnchorCell(clientX, clientY) {
+    const rect = boardEl.getBoundingClientRect();
+    const row = Math.floor((clientY - rect.top) / CELL_STEP);
+    const col = Math.floor((clientX - rect.left) / CELL_STEP);
+    return { row, col };
+  }
+
+  function onPointerMove(e) {
+    if (!dragging) return;
+    updateGhostPosition(e.clientX, e.clientY);
+
+    const { row, col } = pointerToAnchorCell(e.clientX, e.clientY);
+
+    // Skip the expensive board scan if the cursor is still over the same cell.
+    if (lastAnchor && lastAnchor.row === row && lastAnchor.col === col) return;
+    lastAnchor = { row, col };
+
+    clearPreview();
+    const piece = pieces[draggingKey];
+    const { targets, valid } = computeTargets(piece, row, col);
+
+    if (!valid) {
+      targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-invalid'); });
+      return;
+    }
+
+    if (piece.isBomb) {
+      targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-valid'); });
+      return;
+    }
+
+    const hypotheticalGrid = grid.map(r => r.slice());
+    targets.forEach(t => { hypotheticalGrid[t.r][t.c] = t.letter; });
+    const formsWord = findMatches(hypotheticalGrid).length > 0;
+
+    const previewClass = formsWord ? 'preview-valid' : 'preview-no-word';
+    targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add(previewClass); });
+  }
+
+  function onPointerUp() {
+    if (!dragging) return;
+    dragging = false;
+    dragGhost.style.display = 'none';
+    clearPreview();
+
+    if (lastAnchor && !gameOver) {
+      const usedKey = draggingKey; 
+      const result = placePiece(usedKey, lastAnchor.row, lastAnchor.col);
+      if (result) {
+        render();
+
+        const afterTurn = (wordsCleared) => {
+          turnCount += 1;
+          expireMultipliers();
+          if (wordsCleared) maybeSpawnMultiplier();
+          render();
+
+          const otherKey = usedKey === 'A' ? 'B' : 'A';
+          pieces[usedKey] = generatePieceForSlot(pieces[otherKey]);
+          renderPieceTray();
+
+          checkGameOver();
+        };
+
+        if (result.wasBomb) {
+          resolveBomb(result.bombedCells, () => afterTurn(false));
+        } else {
+          const matches = findMatches();
+          resolveWordMatches(matches, () => afterTurn(matches.length > 0));
+        }
+      }
+    }
+
+    draggingKey = null;
+    document.removeEventListener('pointermove', onPointerMove);
+    document.removeEventListener('pointerup', onPointerUp);
+    document.body.style.userSelect = '';
+  }
+
+  function startDrag(key, e) {
+    if (gameOver) return;
+    dragging = true;
+    draggingKey = key;
+    lastAnchor = null;
+    buildGhost(pieces[key]);
+    dragGhost.style.display = 'grid';
+    updateGhostPosition(e.clientX, e.clientY);
+    document.addEventListener('pointermove', onPointerMove);
+    document.addEventListener('pointerup', onPointerUp);
+    document.body.style.userSelect = 'none';
+  }
+
+  hintBtn.addEventListener('click', () => {
+    if (!canUseHint()) return; 
+
+    const result = findBestHintWord();
+    hintResultEl.textContent = result
+      ? `Hint: ${result.word} would score ~${Math.round(result.value)} points`
+      : "No word can be formed with either piece this turn.";
+  });
+
+  initBoard();
+  placeStartingCluster();
+  renderPieceTray();
+  updateTrackerLists(); 
+  loadDictionary().then(render);
+</script>
+
+</body>
+</html>
