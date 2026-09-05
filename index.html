@@ -549,12 +549,32 @@
       checkLine(line);
     }
 
+    // Annotate each match with a Set of "row,col" keys that were jokers in the source grid,
+    // so resolveWordMatches can score those positions as 1pt regardless of the resolved letter.
+    matches.forEach(match => {
+      match.jokerCells = new Set(
+        match.cells
+          .filter(({ row, col }) => boardToScan[row][col] === JOKER_LETTER)
+          .map(({ row, col }) => `${row},${col}`)
+      );
+    });
+
     return matches;
   }
 
   function wordValue(word) {
     const letterSum = word.split('').reduce((sum, ch) => sum + letterValue(ch), 0);
     return letterSum * (word.length ** 2);
+  }
+
+  // Scores a matched word correctly, treating joker cells as 1pt regardless of resolved letter.
+  // Used by the hint system for accurate score estimates.
+  function wordValueWithJokers(word, cells, jokerCells) {
+    const letterPts = cells.reduce((sum, { row, col }, i) => {
+      const isJoker = jokerCells && jokerCells.has(`${row},${col}`);
+      return sum + (isJoker ? 1 : letterValue(word[i]));
+    }, 0);
+    return letterPts * (word.length ** 2);
   }
 
   function canUseHint() {
@@ -587,7 +607,7 @@
             const clearedCells = new Set();
             let baseSum = 0;
             matches.forEach(match => {
-              baseSum += wordValue(match.word);
+              baseSum += wordValueWithJokers(match.word, match.cells, match.jokerCells);
               match.cells.forEach(({ row, col }) => clearedCells.add(`${row},${col}`));
             });
             const multiWordBonus = matches.length > 1 ? 40 : 0;
@@ -601,7 +621,9 @@
             });
 
             const value = preMultiplierTotal * multiplierFactor;
-            const bestWord = matches.reduce((a, b) => wordValue(a.word) > wordValue(b.word) ? a : b).word;
+            const bestWord = matches.reduce((a, b) =>
+              wordValueWithJokers(a.word, a.cells, a.jokerCells) > wordValueWithJokers(b.word, b.cells, b.jokerCells) ? a : b
+            ).word;
             if (!best || value > best.value) best = { word: bestWord, value };
           }
         }
@@ -689,7 +711,12 @@
 
     matches.forEach(match => {
       const word = match.word;
-      const letterPts = word.split('').reduce((sum, ch) => sum + letterValue(ch), 0);
+      // Score each position using the original tile value: joker cells are always 1pt,
+      // even if the joker resolved to a high-value pink letter like X or Q.
+      const letterPts = match.cells.reduce((sum, { row, col }, i) => {
+        const isJoker = match.jokerCells && match.jokerCells.has(`${row},${col}`);
+        return sum + (isJoker ? 1 : letterValue(word[i]));
+      }, 0);
       const lengthSq = word.length ** 2;
       const val = letterPts * lengthSq;
       baseSum += val;
@@ -713,7 +740,7 @@
 
     // Log the individual words for the tracker side panel
     matches.forEach(match => {
-      const individualScore = wordValue(match.word) * multiplierFactor;
+      const individualScore = wordValueWithJokers(match.word, match.cells, match.jokerCells) * multiplierFactor;
       logWord(match.word, individualScore);
     });
 
