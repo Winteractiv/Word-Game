@@ -728,12 +728,12 @@
   }
 
   // ---- Animation helpers ----
-  function scoreTier(gained) {
-    if (gained <= 64) return 1;
-    if (gained <= 128) return 2;
-    if (gained <= 256) return 3;
-    return 4;
-  }
+function scoreTier(gained) {
+  if (gained <= 16) return 1;   // Green
+  if (gained <= 64) return 2;   // Cyan
+  if (gained <= 256) return 3;  // Orange
+  return 4;                     // Pink
+}
 
   function spawnScorePopup(text, tier, coords) {
     const rects = coords.map(([r, c]) => cellEls[r][c].getBoundingClientRect());
