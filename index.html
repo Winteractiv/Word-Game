@@ -5,6 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Word Grid - Scoring D (pts x (len - 2)^2)</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* ---- Unlock toast ---- */
+    #unlockToast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(20px);
+      background: #2a5c2a;
+      color: #b8ffb8;
+      border: 1px solid #4caf50;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font-size: 1rem;
+      font-weight: bold;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      z-index: 9999;
+      white-space: nowrap;
+    }
+    #unlockToast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
 </head>
 <body>
 
@@ -79,6 +104,7 @@
 </div>
 
 <div id="dragGhost" style="display:none;"></div>
+<div id="unlockToast"></div>
 
 <script>
   const SIZE = 8;
@@ -103,6 +129,18 @@
   let score = 0;
   let turnCount = 0;
   let gameOver = false;
+
+  // ---- Unlock state ----
+  // Slot keys in unlock order. Slots beyond unlockedSlots are not generated or shown.
+  const SLOT_KEYS = ['A', 'B', 'C', 'D'];
+  const UNLOCK_THRESHOLDS = { C: 20, D: 50 }; // turn at which each extra slot unlocks
+  let unlockedSlots = 2; // starts at 2; grows to 3 at turn 20, 4 at turn 50
+
+  function activeKeys() { return SLOT_KEYS.slice(0, unlockedSlots); }
+
+  // Max bombs allowed across all active slots.
+  // 1 bomb before first unlock; 2 after first unlock (turn 20+); cap stays at 2 after second.
+  function maxBombs() { return unlockedSlots >= 3 ? 2 : 1; }
 
   // --- Tracker State ---
   let recentWords = [];
@@ -290,9 +328,9 @@
     return { cells, isBomb: true };
   }
 
-  function generatePieceForSlot(otherSlotPiece) {
-    const otherHasBomb = otherSlotPiece && otherSlotPiece.isBomb;
-    if (!otherHasBomb && Math.random() < BOMB_CHANCE) return generateBombPiece();
+  function generatePieceForSlot() {
+    const currentBombs = activeKeys().filter(k => pieces[k] && pieces[k].isBomb).length;
+    if (currentBombs < maxBombs() && Math.random() < BOMB_CHANCE) return generateBombPiece();
     return generateLetterPiece();
   }
 
@@ -307,8 +345,8 @@
   }
 
   const pieces = {};
-  pieces.A = generatePieceForSlot(null);
-  pieces.B = generatePieceForSlot(pieces.A);
+  pieces.A = generatePieceForSlot();
+  pieces.B = generatePieceForSlot();
 
   // ---- Piece tray rendering ----
   function renderPieceShape(container, piece) {
@@ -337,18 +375,20 @@
     }
   }
 
+  const SLOT_LABELS = { A: 'Option 1', B: 'Option 2', C: 'Option 3', D: 'Option 4' };
+
   function renderPieceTray() {
     hintResultEl.textContent = '';
     pieceTrayEl.innerHTML = '';
 
-    ['A', 'B'].forEach(key => {
+    activeKeys().forEach(key => {
       const piece = pieces[key];
       const slot = document.createElement('div');
       slot.className = 'piece-slot' + (piece.isBomb ? ' bomb-slot' : '');
 
       const label = document.createElement('div');
       label.className = 'piece-label';
-      label.textContent = piece.isBomb ? '💣 Bomb — drop on letters' : (key === 'A' ? 'Option 1' : 'Option 2');
+      label.textContent = piece.isBomb ? '💣 Bomb — drop on letters' : SLOT_LABELS[key];
 
       const shapeWrap = document.createElement('div');
       shapeWrap.className = 'piece-shape-wrap';
@@ -417,9 +457,10 @@
 
   function checkGameOver() {
     if (gameOver) return;
-    if (!pieceHasValidPlacement(pieces.A) && !pieceHasValidPlacement(pieces.B)) {
+    const anyFits = activeKeys().some(k => pieceHasValidPlacement(pieces[k]));
+    if (!anyFits) {
       gameOver = true;
-      statusEl.textContent = `Game over — neither piece fits anywhere. Final score: ${Math.round(score)}`;
+      statusEl.textContent = `Game over — no piece fits anywhere. Final score: ${Math.round(score)}`;
       statusEl.classList.add('game-over');
       boardEl.style.pointerEvents = 'none';
       pieceTrayEl.style.opacity = '0.5';
@@ -581,6 +622,19 @@
     return letterPts * wordLengthScoreFactor(word.length);
   }
 
+  // ---- Unlock toast ----
+  const unlockToastEl = document.getElementById('unlockToast');
+  let unlockToastTimer = null;
+
+  function showUnlockToast(slotNumber) {
+    unlockToastEl.textContent = `🔓 Option ${slotNumber} unlocked!`;
+    unlockToastEl.classList.add('visible');
+    if (unlockToastTimer) clearTimeout(unlockToastTimer);
+    unlockToastTimer = setTimeout(() => {
+      unlockToastEl.classList.remove('visible');
+    }, 2500);
+  }
+
   function canUseHint() {
     return true; 
   }
@@ -592,7 +646,7 @@
     if (hintCache.turn === turnCount) return hintCache.result;
 
     let best = null;
-    ['A', 'B'].forEach(key => {
+    activeKeys().forEach(key => {
       let candidate = pieces[key];
       if (candidate.isBomb) return;
 
@@ -1081,15 +1135,27 @@
         const afterTurn = () => {
           turnCount += 1;
           expireMultipliers();
-          if (result.wasBomb) {
-            maybeSpawnMultiplier();
-          } else {
-            maybeSpawnMultiplier();
-          }
+          maybeSpawnMultiplier();
           render();
-          const otherKey = usedKey === 'A' ? 'B' : 'A';
-          pieces[usedKey] = generatePieceForSlot(pieces[otherKey]);
+
+          // Check for slot unlocks at this turn count
+          let newlyUnlocked = 0;
+          if (unlockedSlots < 3 && turnCount >= UNLOCK_THRESHOLDS.C) {
+            unlockedSlots = 3;
+            pieces.C = generatePieceForSlot();
+            newlyUnlocked = 3;
+          } else if (unlockedSlots < 4 && turnCount >= UNLOCK_THRESHOLDS.D) {
+            unlockedSlots = 4;
+            pieces.D = generatePieceForSlot();
+            newlyUnlocked = 4;
+          }
+
+          // Refresh only the slot that was just used
+          pieces[usedKey] = generatePieceForSlot();
           renderPieceTray();
+
+          if (newlyUnlocked) showUnlockToast(newlyUnlocked);
+
           checkGameOver();
         };
 
