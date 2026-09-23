@@ -115,7 +115,67 @@ button:hover { background: #4e4e70; }
   border-top: 1px dashed #444;
 }
 
-/* --- Board & Pieces --- */
+/* --- Landscape Mobile: tray left, board right --- */
+@media (max-height: 600px) and (orientation: landscape) {
+
+  /* Tighten the outer pane padding */
+  .game-pane {
+    padding: 10px;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  /* Hide the verbose subtitle to save vertical space */
+  .game-pane p.subtitle { display: none; }
+  .game-pane h1 { font-size: 16px; margin-bottom: 2px; }
+
+  #topBar { margin-top: 4px; gap: 16px; font-size: 13px; }
+  #score { font-size: 18px; }
+
+  /* Row container: tray on left, board on right */
+  #landscapeRow {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 8px;
+    width: 100%;
+  }
+
+  /* Tray stacks its slots vertically in a narrow left column */
+  #pieceTray {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 0;
+    flex-shrink: 0;
+  }
+
+  /* Compact slot size for landscape */
+  .piece-slot {
+    width: 130px;
+    height: 130px;
+    padding: 6px 8px;
+    min-height: unset;
+  }
+
+  /* Smaller piece cells to fit compact slots */
+  .piece-cell {
+    width: 22px;
+    height: 22px;
+    font-size: 11px;
+  }
+
+  /* Board stays its natural size; just remove its top margin */
+  #board { margin-top: 0; }
+
+  #hintResult { margin-top: 4px; font-size: 12px; }
+  #status { margin-top: 8px; }
+}
+
+/* landscapeRow is a transparent passthrough wrapper outside landscape mobile */
+#landscapeRow { display: contents; }
+
 #pieceTray { display: flex; align-items: flex-start; gap: 24px; margin-top: 16px; user-select: none; }
 
 /* On portrait mobile, wrap to 2 columns so Options 3 & 4 sit below Options 1 & 2 */
