@@ -118,6 +118,15 @@ button:hover { background: #4e4e70; }
 /* --- Board & Pieces --- */
 #pieceTray { display: flex; align-items: flex-start; gap: 24px; margin-top: 16px; user-select: none; }
 
+/* On portrait mobile, wrap to 2 columns so Options 3 & 4 sit below Options 1 & 2 */
+@media (max-width: 600px) and (orientation: portrait) {
+  #pieceTray {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+}
+
 .piece-slot {
   width: 220px; height: 220px;
   padding: 10px 12px; box-sizing: border-box;
@@ -126,6 +135,14 @@ button:hover { background: #4e4e70; }
   display: grid;
   grid-template-rows: auto 1fr auto;
   justify-items: center; gap: 6px; user-select: none;
+}
+
+@media (max-width: 600px) and (orientation: portrait) {
+  .piece-slot {
+    width: 100%;
+    height: auto;
+    min-height: 160px;
+  }
 }
 .piece-slot.bomb-slot { background: #3e2a2a; }
 
