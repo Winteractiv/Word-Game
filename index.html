@@ -1191,7 +1191,7 @@ function scoreTier(gained) {
     const result = findBestHintWord();
     hintResultEl.textContent = result
       ? `Hint: ${result.word} would score ~${Math.round(result.value)} points.`
-      : 'No word can be formed with either piece this turn.';
+      : 'No word can be formed this turn.';
   });
 
   initBoard();
