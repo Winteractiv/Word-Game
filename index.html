@@ -46,7 +46,7 @@
     <div class="legend-line">Spelling 2+ separate words (different rows/columns) in the same turn adds a +40 bonus, added before multipliers.</div>
     <div class="legend-line">Each time you clear letters by spelling a word, a random empty cell gains a multiplier (×2, ×3, or ×4). Higher values appear near the edges. Multipliers last 8 turns and show a countdown. Multipliers are applied after all other point bonuses.</div>
     <div class="legend-line">
-      <span class="legend-bomb">💣 Bombs</span> allow you to remove tricky letters from your board. Bombs score 10 points per letter removed (multipliers apply).
+      <span class="legend-bomb">💣 Bombs</span> allow you to remove tricky letters from your board. Bombs score 1 point per letter removed (multipliers apply).
     </div>
     <div id="scoreBreakdown">Last turn: —</div>
   </aside>
@@ -868,7 +868,7 @@ function scoreTier(gained) {
     let gained = 0;
     const removedLetters = [];
     bombedCells.forEach(({ row, col, letter }) => {
-      let val = 10;
+      let val = 1;
       const m = multiplierGrid[row][col];
       if (m) val *= m.value;
       gained += val;
