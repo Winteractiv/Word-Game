@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Word Grid - Scoring D (pts x len squared)</title>
+  <title>Word Grid - Scoring D (pts x (len - 2)^2)</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
       <span class="legend-pink">Pink tiles</span> (Q, W, Z, X, V, K, J) are worth 5 points each and are rarer than other letters: Every other letter is worth 1. Also, 3-letter words are valid if they contain a pink tile.
     </div>
     <div class="legend-line">⭐ <strong>Joker tiles</strong> act as any letter: the game automatically picks whichever letter scores highest. Jokers are worth 1 point.</div>
-    <div class="legend-line">Word score = (sum of letter values) × word length². Longer words score exponentially more!</div>
+    <div class="legend-line">Word score = (sum of letter values) × (word length - 2)². Longer words score exponentially more!</div>
     <div class="legend-line">Spelling 2+ separate words (different rows/columns) in the same turn adds a +40 bonus, added before multipliers.</div>
     <div class="legend-line">Each time you clear letters by spelling a word, a random empty cell gains a multiplier (×2, ×3, or ×4). Higher values appear near the edges. Multipliers last 8 turns and show a countdown. Multipliers are applied after all other point bonuses.</div>
     <div class="legend-line">
@@ -562,9 +562,13 @@
     return matches;
   }
 
+  function wordLengthScoreFactor(wordLength) {
+    return (wordLength - 2) ** 2;
+  }
+
   function wordValue(word) {
     const letterSum = word.split('').reduce((sum, ch) => sum + letterValue(ch), 0);
-    return letterSum * (word.length ** 2);
+    return letterSum * wordLengthScoreFactor(word.length);
   }
 
   // Scores a matched word correctly, treating joker cells as 1pt regardless of resolved letter.
@@ -574,7 +578,7 @@
       const isJoker = jokerCells && jokerCells.has(`${row},${col}`);
       return sum + (isJoker ? 1 : letterValue(word[i]));
     }, 0);
-    return letterPts * (word.length ** 2);
+    return letterPts * wordLengthScoreFactor(word.length);
   }
 
   function canUseHint() {
@@ -717,10 +721,10 @@
         const isJoker = match.jokerCells && match.jokerCells.has(`${row},${col}`);
         return sum + (isJoker ? 1 : letterValue(word[i]));
       }, 0);
-      const lengthSq = word.length ** 2;
-      const val = letterPts * lengthSq;
+      const lengthFactor = wordLengthScoreFactor(word.length);
+      const val = letterPts * lengthFactor;
       baseSum += val;
-      wordSummaries.push(`${word} (${letterPts} letter pts x ${lengthSq} length squared = ${val})`);
+      wordSummaries.push(`${word} (${letterPts} letter pts x (${word.length} - 2)^2 = ${val})`);
       match.cells.forEach(({ row, col }) => clearedCells.add(`${row},${col}`));
     });
 
@@ -1006,7 +1010,6 @@
         if (!match) cls += ' empty';
         else if (piece.isBomb) cls += ' bomb';
         else if (isSpecial(match.letter)) cls += ' special';
-        // joker uses default green — no extra class needed
         div.className = cls;
         div.textContent = match ? (piece.isBomb ? '💣' : match.letter) : '';
         dragGhost.appendChild(div);
@@ -1014,7 +1017,7 @@
     }
   }
 
-  const FINGER_GAP = 80; // px between fingertip and bottom edge of ghost (touch/pen only)
+  const FINGER_GAP = 80; // px between fingertip and bottom edge of ghost (touch only)
   let isDragTouch = false; // true when current drag was initiated by touch or pen
 
   function updateGhostPosition(clientX, clientY) {
@@ -1036,8 +1039,6 @@
     updateGhostPosition(e.clientX, e.clientY);
 
     const { row, col } = pointerToAnchorCell(e.clientX, e.clientY);
-
-    // Skip the expensive board scan if the cursor is still over the same cell.
     if (lastAnchor && lastAnchor.row === row && lastAnchor.col === col) return;
     lastAnchor = { row, col };
 
@@ -1046,21 +1047,25 @@
     const { targets, valid } = computeTargets(piece, row, col);
 
     if (!valid) {
-      targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-invalid'); });
+      targets.forEach(t => {
+        if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-invalid');
+      });
       return;
     }
 
     if (piece.isBomb) {
-      targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-valid'); });
+      targets.forEach(t => {
+        if (t.inBounds) cellEls[t.r][t.c].classList.add('preview-valid');
+      });
       return;
     }
 
     const hypotheticalGrid = grid.map(r => r.slice());
     targets.forEach(t => { hypotheticalGrid[t.r][t.c] = t.letter; });
     const formsWord = findMatches(hypotheticalGrid).length > 0;
-
-    const previewClass = formsWord ? 'preview-valid' : 'preview-no-word';
-    targets.forEach(t => { if (t.inBounds) cellEls[t.r][t.c].classList.add(previewClass); });
+    targets.forEach(t => {
+      if (t.inBounds) cellEls[t.r][t.c].classList.add(formsWord ? 'preview-valid' : 'preview-no-word');
+    });
   }
 
   function onPointerUp() {
@@ -1068,38 +1073,36 @@
     dragging = false;
     dragGhost.style.display = 'none';
     clearPreview();
-
     if (lastAnchor && !gameOver) {
-      const usedKey = draggingKey; 
+      const usedKey = draggingKey;
       const result = placePiece(usedKey, lastAnchor.row, lastAnchor.col);
       if (result) {
         render();
-
-        const afterTurn = (wordsCleared) => {
+        const afterTurn = () => {
           turnCount += 1;
           expireMultipliers();
-          if (wordsCleared) maybeSpawnMultiplier();
+          if (result.wasBomb) {
+            maybeSpawnMultiplier();
+          } else {
+            maybeSpawnMultiplier();
+          }
           render();
-
           const otherKey = usedKey === 'A' ? 'B' : 'A';
           pieces[usedKey] = generatePieceForSlot(pieces[otherKey]);
           renderPieceTray();
-
           checkGameOver();
         };
 
         if (result.wasBomb) {
-          resolveBomb(result.bombedCells, () => afterTurn(false));
+          resolveBomb(result.bombedCells, afterTurn);
         } else {
           const matches = findMatches();
-          resolveWordMatches(matches, () => afterTurn(matches.length > 0));
+          resolveWordMatches(matches, afterTurn);
         }
       }
     }
-
     draggingKey = null;
-    document.removeEventListener('pointermove', onPointerMove);
-    document.removeEventListener('pointerup', onPointerUp);
+    lastAnchor = null;
     document.body.style.userSelect = '';
   }
 
@@ -1112,24 +1115,23 @@
     buildGhost(pieces[key]);
     dragGhost.style.display = 'grid';
     updateGhostPosition(e.clientX, e.clientY);
+    document.body.style.userSelect = 'none';
     document.addEventListener('pointermove', onPointerMove);
     document.addEventListener('pointerup', onPointerUp);
-    document.body.style.userSelect = 'none';
   }
 
   hintBtn.addEventListener('click', () => {
-    if (!canUseHint()) return; 
-
+    if (!canUseHint()) return;
     const result = findBestHintWord();
     hintResultEl.textContent = result
-      ? `Hint: ${result.word} would score ~${Math.round(result.value)} points`
-      : "No word can be formed with either piece this turn.";
+      ? `Hint: ${result.word} would score ~${Math.round(result.value)} points.`
+      : 'No word can be formed with either piece this turn.';
   });
 
   initBoard();
   placeStartingCluster();
   renderPieceTray();
-  updateTrackerLists(); 
+  updateTrackerLists();
   loadDictionary().then(render);
 </script>
 
